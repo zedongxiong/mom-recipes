@@ -31,7 +31,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: "妈妈的菜谱",
-    icon: path.join(__dirname, "renderer", "icon.png"),
+    icon: path.join(__dirname, "..", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
