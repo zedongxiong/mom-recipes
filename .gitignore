@@ -1,0 +1,8 @@
+node_modules/
+app/node_modules/
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+视频素材/

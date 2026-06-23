@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>妈妈的菜谱</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="logo">
+      <span class="logo-icon">🍳</span>
+      <h1>妈妈的菜谱</h1>
+    </div>
+    <nav>
+      <button class="nav-btn active" data-view="home">
+        <span class="nav-icon">🏠</span> 首页
+      </button>
+      <button class="nav-btn" data-view="list">
+        <span class="nav-icon">📖</span> 菜谱列表
+      </button>
+      <button class="nav-btn" data-view="create">
+        <span class="nav-icon">➕</span> 新建菜谱
+      </button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="stats-mini" id="stats-mini"></div>
+    </div>
+  </aside>
+
+  <!-- 主内容区 -->
+  <main class="content">
+    <!-- 首页 -->
+    <section class="view active" id="view-home">
+      <div class="home-header">
+        <h2>今天学了什么菜？</h2>
+        <p class="subtitle">记录妈妈的手艺，留住家的味道</p>
+      </div>
+      <div class="stats-cards" id="stats-cards"></div>
+      <div class="recent-section">
+        <h3>最近学习</h3>
+        <div class="recent-list" id="recent-list"></div>
+      </div>
+    </section>
+
+    <!-- 菜谱列表 -->
+    <section class="view" id="view-list">
+      <div class="list-header">
+        <h2>菜谱列表</h2>
+        <div class="list-controls">
+          <input type="text" id="search-input" placeholder="搜索菜名..." />
+          <select id="filter-category">
+            <option value="">全部分类</option>
+            <option value="炒">🍳 炒</option>
+            <option value="炖煮">🍲 炖煮</option>
+            <option value="蒸">♨️ 蒸</option>
+            <option value="煎炸">🫕 煎炸</option>
+            <option value="凉拌">🥗 凉拌</option>
+            <option value="汤">🥣 汤</option>
+            <option value="烤">🔥 烤</option>
+            <option value="腌卤">🧂 腌卤</option>
+            <option value="主食">🍚 主食</option>
+          </select>
+          <select id="filter-status">
+            <option value="">全部状态</option>
+            <option value="✅">✅ 已学会</option>
+            <option value="🔄">🔄 复习中</option>
+            <option value="📝">📝 已记录</option>
+          </select>
+        </div>
+      </div>
+      <div class="recipe-grid" id="recipe-grid"></div>
+    </section>
+
+    <!-- 新建菜谱 -->
+    <section class="view" id="view-create">
+      <h2>新建菜谱</h2>
+      <form id="create-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="recipe-name">菜名 <span class="required">*</span></label>
+            <input type="text" id="recipe-name" placeholder="例：油焖大虾" required />
+          </div>
+          <div class="form-group">
+            <label for="recipe-category">分类 <span class="required">*</span></label>
+            <select id="recipe-category" required>
+              <option value="">选择分类</option>
+              <option value="炒">🍳 炒</option>
+              <option value="炖煮">🍲 炖煮</option>
+              <option value="蒸">♨️ 蒸</option>
+              <option value="煎炸">🫕 煎炸</option>
+              <option value="凉拌">🥗 凉拌</option>
+              <option value="汤">🥣 汤</option>
+              <option value="烤">🔥 烤</option>
+              <option value="腌卤">🧂 腌卤</option>
+              <option value="主食">🍚 主食</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>难度</label>
+            <div class="difficulty-select" id="recipe-difficulty">
+              <button type="button" class="diff-btn active" data-value="1">⭐ 简单</button>
+              <button type="button" class="diff-btn" data-value="2">⭐⭐ 中等</button>
+              <button type="button" class="diff-btn" data-value="3">⭐⭐⭐ 困难</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="recipe-date">学会日期</label>
+            <input type="text" id="recipe-date" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="recipe-servings">份量</label>
+            <div class="number-input">
+              <button type="button" class="num-btn" data-target="recipe-servings" data-delta="-1">−</button>
+              <input type="number" id="recipe-servings" value="2" min="1" max="20" />
+              <button type="button" class="num-btn" data-target="recipe-servings" data-delta="1">+</button>
+              <span class="unit">人份</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="recipe-time">用时</label>
+            <div class="number-input">
+              <input type="number" id="recipe-time" placeholder="分钟" min="1" />
+              <span class="unit">分钟</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn-primary" id="create-btn">✨ 创建菜谱</button>
+        </div>
+      </form>
+      <div class="create-result" id="create-result" style="display: none"></div>
+    </section>
+
+    <!-- 编辑菜谱（结构化表单） -->
+    <section class="view" id="view-edit">
+      <div class="edit-header">
+        <button class="btn-back" id="edit-back">← 返回列表</button>
+        <div class="edit-title" id="edit-title"></div>
+        <div class="edit-actions">
+          <button class="btn-primary" id="edit-save">💾 保存</button>
+        </div>
+      </div>
+
+      <div class="edit-scroll">
+        <!-- 基本信息 -->
+        <div class="edit-section">
+          <h3>📋 基本信息</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label>分类</label>
+              <select id="edit-category">
+                <option value="炒">🍳 炒</option>
+                <option value="炖煮">🍲 炖煮</option>
+                <option value="蒸">♨️ 蒸</option>
+                <option value="煎炸">🫕 煎炸</option>
+                <option value="凉拌">🥗 凉拌</option>
+                <option value="汤">🥣 汤</option>
+                <option value="烤">🔥 烤</option>
+                <option value="腌卤">🧂 腌卤</option>
+                <option value="主食">🍚 主食</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>难度</label>
+              <div class="difficulty-select" id="edit-difficulty">
+                <button type="button" class="diff-btn active" data-value="1">⭐</button>
+                <button type="button" class="diff-btn" data-value="2">⭐⭐</button>
+                <button type="button" class="diff-btn" data-value="3">⭐⭐⭐</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>用时</label>
+              <div class="number-input">
+                <input type="number" id="edit-time" placeholder="分钟" min="1" />
+                <span class="unit">分钟</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>份量</label>
+              <div class="number-input">
+                <input type="number" id="edit-servings" value="2" min="1" max="20" />
+                <span class="unit">人份</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 食材 -->
+        <div class="edit-section">
+          <h3>🥬 食材</h3>
+          <div class="list-editor" id="edit-ingredients">
+            <!-- 动态生成 -->
+          </div>
+          <button type="button" class="btn-add" data-list="edit-ingredients">+ 添加食材</button>
+        </div>
+
+        <!-- 调料 -->
+        <div class="edit-section">
+          <h3>🧂 调料</h3>
+          <div class="list-editor" id="edit-seasonings">
+          </div>
+          <button type="button" class="btn-add" data-list="edit-seasonings">+ 添加调料</button>
+        </div>
+
+        <!-- 步骤 -->
+        <div class="edit-section">
+          <h3>👨‍🍳 步骤</h3>
+          <div class="steps-editor" id="edit-steps">
+          </div>
+          <button type="button" class="btn-add" data-list="edit-steps">+ 添加步骤</button>
+        </div>
+
+        <!-- 妈妈的秘诀 -->
+        <div class="edit-section">
+          <h3>💡 妈妈的秘诀</h3>
+          <p class="section-desc">菜谱上不会写、但决定成败的经验</p>
+          <div class="list-editor" id="edit-tips">
+          </div>
+          <button type="button" class="btn-add" data-list="edit-tips">+ 添加秘诀</button>
+        </div>
+
+        <!-- 食材选择 -->
+        <div class="edit-section">
+          <h3>🛒 食材选择</h3>
+          <p class="section-desc">以后自己买菜要用的信息</p>
+          <div class="list-editor" id="edit-shopping">
+          </div>
+          <button type="button" class="btn-add" data-list="edit-shopping">+ 添加说明</button>
+        </div>
+
+        <!-- 易错点 -->
+        <div class="edit-section">
+          <h3>⚠️ 易错点 & 补救</h3>
+          <div class="mistakes-editor" id="edit-mistakes">
+          </div>
+          <button type="button" class="btn-add" data-list="edit-mistakes">+ 添加易错点</button>
+        </div>
+
+        <!-- 灵活空间 -->
+        <div class="edit-section">
+          <h3>🔄 灵活空间</h3>
+          <div class="flex-editor">
+            <div class="form-group">
+              <label>可以替换的</label>
+              <input type="text" id="edit-substitute" placeholder="没有 XX 可以用 __ 代替" />
+            </div>
+            <div class="form-group">
+              <label>不能省的</label>
+              <input type="text" id="edit-essential" placeholder="__ 是灵魂，去掉就不是这个味了" />
+            </div>
+            <div class="form-group">
+              <label>可以加的</label>
+              <input type="text" id="edit-variety" placeholder="加 __ 就变成另一种口味" />
+            </div>
+          </div>
+        </div>
+
+        <!-- 视频 -->
+        <div class="edit-section">
+          <h3>🎬 视频</h3>
+          <p class="section-desc">上传拍摄的做菜视频，自动归档到对应文件夹</p>
+          <div class="video-area" id="edit-video-area">
+            <div class="video-list" id="edit-video-list"></div>
+            <button type="button" class="video-upload-btn" id="video-upload-btn">📹 选择视频文件</button>
+          </div>
+        </div>
+
+        <!-- 学习笔记 -->
+        <div class="edit-section">
+          <h3>📝 学习笔记</h3>
+          <textarea id="edit-notes" placeholder="自己的感受、调整、心得..."></textarea>
+        </div>
+
+        <!-- 家人反馈 -->
+        <div class="edit-section">
+          <h3>👨‍👩‍👧 家人反馈</h3>
+          <textarea id="edit-feedback" placeholder="家人吃了之后的评价..."></textarea>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
