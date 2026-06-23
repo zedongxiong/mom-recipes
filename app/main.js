@@ -71,6 +71,10 @@ function ensureDir(dir) {
 // 扫描所有菜谱文件
 function scanRecipes() {
   const recipes = [];
+  // README 只读一次（修复 N+1）
+  let readmeContent = "";
+  try { readmeContent = fs.readFileSync(README_FILE, "utf-8"); } catch (_) {}
+
   for (const category of Object.keys(CATEGORIES)) {
     const catDir = path.join(RECIPES_DIR, category);
     if (!fs.existsSync(catDir)) continue;
@@ -93,7 +97,6 @@ function scanRecipes() {
       );
 
       // 从 README 读取状态
-      const readmeContent = fs.readFileSync(README_FILE, "utf-8");
       let status = "📝";
       const statusRegex = new RegExp(
         `\\|\\s*\\d*\\s*\\|\\s*${name.replace(
@@ -126,55 +129,66 @@ function scanRecipes() {
 
 // 新建菜谱
 ipcMain.handle("create-recipe", (event, data) => {
-  const { name, category, difficulty, date, servings, cookTime } = data;
+  try {
+    const { name, category, difficulty, date, servings, cookTime } = data;
 
-  const dateStr = date || new Date().toISOString().slice(5, 10);
-  const dayNum = getDayNumber(dateStr);
-  const fullDate = `2026-${dateStr}`;
+    // 参数校验
+    if (!name || !name.trim()) return { success: false, error: "菜名不能为空" };
+    if (!category) return { success: false, error: "请选择分类" };
+    if (!CATEGORIES[category]) return { success: false, error: `无效分类: ${category}` };
+    if (/[\\/]/.test(name) || /\.\./.test(name)) return { success: false, error: "菜名包含非法字符" };
 
-  // 1. 创建视频文件夹
-  const videoFolderName = `Day${String(dayNum).padStart(2, "0")}-${name}`;
-  const videoFolderPath = path.join(VIDEO_DIR, videoFolderName);
-  ensureDir(videoFolderPath);
+    const dateStr = date || new Date().toISOString().slice(5, 10);
+    const dayNum = getDayNumber(dateStr);
+    const fullDate = `2026-${dateStr}`;
 
-  // 2. 创建菜谱文件
-  const recipeDir = path.join(RECIPES_DIR, category);
-  ensureDir(recipeDir);
-  const recipeFile = path.join(recipeDir, `${name}.md`);
+    // 1. 创建视频文件夹
+    const videoFolderName = `Day${String(dayNum).padStart(2, "0")}-${name}`;
+    const videoFolderPath = path.join(VIDEO_DIR, videoFolderName);
+    ensureDir(videoFolderPath);
 
-  if (fs.existsSync(recipeFile)) {
-    return { success: false, error: "菜谱已存在" };
+    // 2. 创建菜谱文件
+    const recipeDir = path.join(RECIPES_DIR, category);
+    ensureDir(recipeDir);
+    const recipeFile = path.join(recipeDir, `${name}.md`);
+
+    if (fs.existsSync(recipeFile)) {
+      return { success: false, error: "菜谱已存在" };
+    }
+
+    let template = fs.readFileSync(TEMPLATE_FILE, "utf-8");
+    const difficultyStars = DIFFICULTY[difficulty] || "⭐";
+    const timeStr = cookTime ? `${cookTime} 分钟` : "___ 分钟";
+
+    template = template
+      .replace("[菜名]", name)
+      .replace(
+        "肉类 / 海鲜 / 蔬菜 / 汤品 / 主食 / 凉菜 / 节日菜",
+        category
+      )
+      .replace("⭐ / ⭐⭐ / ⭐⭐⭐", difficultyStars)
+      .replace("___ 分钟", timeStr)
+      .replace("___ 人份", `${servings || 2} 人份`)
+      .replace("____-__-__", fullDate)
+      .replace(
+        "视频素材/DayXX-菜名/",
+        `视频素材/${videoFolderName}/`
+      );
+
+    fs.writeFileSync(recipeFile, template, "utf-8");
+
+    // 3. 更新 README
+    updateReadme(name, category, difficulty, dateStr);
+
+    return {
+      success: true,
+      videoFolder: videoFolderName,
+      recipePath: normalizePath(path.relative(ROOT, recipeFile)),
+    };
+  } catch (error) {
+    console.error("[create-recipe]", error);
+    return { success: false, error: error.message };
   }
-
-  let template = fs.readFileSync(TEMPLATE_FILE, "utf-8");
-  const difficultyStars = DIFFICULTY[difficulty] || "⭐";
-  const timeStr = cookTime ? `${cookTime} 分钟` : "___ 分钟";
-
-  template = template
-    .replace("[菜名]", name)
-    .replace(
-      "肉类 / 海鲜 / 蔬菜 / 汤品 / 主食 / 凉菜 / 节日菜",
-      category
-    )
-    .replace("⭐ / ⭐⭐ / ⭐⭐⭐", difficultyStars)
-    .replace("___ 分钟", timeStr)
-    .replace("___ 人份", `${servings || 2} 人份`)
-    .replace("____-__-__", fullDate)
-    .replace(
-      "视频素材/DayXX-菜名/",
-      `视频素材/${videoFolderName}/`
-    );
-
-  fs.writeFileSync(recipeFile, template, "utf-8");
-
-  // 3. 更新 README
-  updateReadme(name, category, difficulty, dateStr);
-
-  return {
-    success: true,
-    videoFolder: videoFolderName,
-    recipePath: normalizePath(path.relative(ROOT, recipeFile)),
-  };
 });
 
 // 更新 README
@@ -307,31 +321,49 @@ ipcMain.handle("update-status", (event, category, name, status) => {
 
 // 删除菜谱
 ipcMain.handle("delete-recipe", (event, category, name) => {
-  const recipeFile = path.join(RECIPES_DIR, category, `${name}.md`);
-  if (fs.existsSync(recipeFile)) {
+  try {
+    // 1. 参数校验
+    if (!category || !name) return { success: false, error: "参数不完整" };
+    if (!CATEGORIES[category]) return { success: false, error: `无效分类: ${category}` };
+    if (/[\\/]/.test(name) || /\.\./.test(name)) return { success: false, error: "菜名包含非法字符" };
+
+    // 2. 检查文件是否存在
+    const recipeFile = path.join(RECIPES_DIR, category, `${name}.md`);
+    if (!fs.existsSync(recipeFile)) {
+      return { success: false, error: `菜谱不存在: ${name}` };
+    }
+
+    // 3. 删除文件
     fs.unlinkSync(recipeFile);
-  }
 
-  // 从 README 移除
-  let content = fs.readFileSync(README_FILE, "utf-8");
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(
-    `\\|\\s*\\d+\\s*\\|\\s*${escapedName}\\s*\\|[^|]*\\|[^|]*\\|[^|]*\\|\\s*\n?`
-  );
-  content = content.replace(regex, "");
-
-  // 更新统计
-  const match = content.match(/- \*\*已学会\*\*：(\d+) 道/);
-  if (match) {
-    const oldCount = parseInt(match[1]);
-    content = content.replace(
-      `- **已学会**：${oldCount} 道`,
-      `- **已学会**：${Math.max(0, oldCount - 1)} 道`
+    // 4. 从 README 移除（先检查是否真的有这行）
+    let content = fs.readFileSync(README_FILE, "utf-8");
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(
+      `\\|\\s*\\d+\\s*\\|\\s*${escapedName}\\s*\\|[^|]*\\|[^|]*\\|[^|]*\\|\\s*\n?`
     );
-  }
 
-  fs.writeFileSync(README_FILE, content, "utf-8");
-  return { success: true };
+    if (regex.test(content)) {
+      content = content.replace(regex, "");
+
+      // 更新统计（只在 README 中有记录时才减）
+      const match = content.match(/- \*\*已学会\*\*：(\d+) 道/);
+      if (match) {
+        const oldCount = parseInt(match[1]);
+        content = content.replace(
+          `- **已学会**：${oldCount} 道`,
+          `- **已学会**：${Math.max(0, oldCount - 1)} 道`
+        );
+      }
+
+      fs.writeFileSync(README_FILE, content, "utf-8");
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("[delete-recipe]", error);
+    return { success: false, error: error.message };
+  }
 });
 
 // 获取统计
