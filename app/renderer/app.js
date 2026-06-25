@@ -38,6 +38,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initCreateForm();
   initEditPage();
   initFilters();
+  initCookLog();
+  initRecommend();
   loadHome();
 });
 
@@ -61,6 +63,8 @@ function switchView(view) {
   document.getElementById(`view-${view}`)?.classList.add("active");
   if (view === "home") loadHome();
   if (view === "list") loadList();
+  if (view === "cook-log") loadCookLogs();
+  if (view === "recommend") loadRecommendation();
 }
 
 // ===== 首页 =====
@@ -766,3 +770,153 @@ document.addEventListener("keydown", e => {
     }
   }
 });
+
+// ===== 做饭日志 =====
+
+function initCookLog() {
+  // 显示/隐藏记录表单
+  document.getElementById("add-log-btn").addEventListener("click", () => {
+    const form = document.getElementById("log-form");
+    form.style.display = form.style.display === "none" ? "block" : "none";
+    if (form.style.display === "block") {
+      loadRecipeOptions();
+    }
+  });
+
+  document.getElementById("cancel-log-btn").addEventListener("click", () => {
+    document.getElementById("log-form").style.display = "none";
+  });
+
+  // 保存日志
+  document.getElementById("save-log-btn").addEventListener("click", saveCookLog);
+}
+
+async function loadRecipeOptions() {
+  const recipes = await window.api.listRecipes();
+  const select = document.getElementById("log-recipe");
+  select.innerHTML = '<option value="">选择菜谱</option>';
+
+  // 只显示已学会和复习中的
+  const available = recipes.filter(r => r.status === "✅" || r.status === "🔄");
+  for (const r of available) {
+    const opt = document.createElement("option");
+    opt.value = `${r.category}|${r.name}`;
+    opt.textContent = `${r.emoji} ${r.name}`;
+    select.appendChild(opt);
+  }
+}
+
+async function saveCookLog() {
+  const recipeValue = document.getElementById("log-recipe").value;
+  if (!recipeValue) {
+    alert("请选择菜谱");
+    return;
+  }
+
+  const [category, recipeName] = recipeValue.split("|");
+  const rating = parseInt(document.getElementById("log-rating").value) || 7;
+  const issues = document.getElementById("log-issues").value.trim();
+  const improvements = document.getElementById("log-improvements").value.trim();
+  const time = document.getElementById("log-time").value.trim();
+  const feedback = document.getElementById("log-feedback").value.trim();
+
+  // 计算第几次做
+  const logs = await window.api.getCookLogs(100);
+  const existingLogs = logs.filter(l => l.recipeName === recipeName);
+  const cookCount = existingLogs.length + 1;
+
+  const result = await window.api.addCookLog({
+    recipeName, category, rating, issues, improvements, time, feedback, cookCount
+  });
+
+  if (result.success) {
+    // 清空表单
+    document.getElementById("log-recipe").value = "";
+    document.getElementById("log-rating").value = "7";
+    document.getElementById("log-issues").value = "";
+    document.getElementById("log-improvements").value = "";
+    document.getElementById("log-time").value = "";
+    document.getElementById("log-feedback").value = "";
+    document.getElementById("log-form").style.display = "none";
+
+    // 刷新日志列表
+    loadCookLogs();
+  } else {
+    alert("保存失败：" + result.error);
+  }
+}
+
+async function loadCookLogs() {
+  const logs = await window.api.getCookLogs(20);
+  const listEl = document.getElementById("log-list");
+
+  if (logs.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📝</div>
+        <p>还没有做饭记录，点击上方按钮开始记录吧！</p>
+      </div>`;
+    return;
+  }
+
+  listEl.innerHTML = logs.map(log => `
+    <div class="log-item">
+      <div class="log-date">${log.date}</div>
+      <div class="log-content">
+        <div class="log-title">🍳 ${log.recipeName}（第 ${log.cookCount} 次）</div>
+        <div class="log-details">
+          <span class="log-rating">评分：${log.rating}/10</span>
+          ${log.issues ? `<span class="log-issues">问题：${log.issues}</span>` : ""}
+          ${log.improvements ? `<span class="log-improve">改进：${log.improvements}</span>` : ""}
+          ${log.time ? `<span class="log-time">耗时：${log.time}</span>` : ""}
+          ${log.feedback ? `<span class="log-feedback">反馈：${log.feedback}</span>` : ""}
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
+// ===== 今天吃啥 =====
+
+function initRecommend() {
+  document.getElementById("refresh-recommend").addEventListener("click", loadRecommendation);
+}
+
+async function loadRecommendation() {
+  const recipes = await window.api.getRecommendation();
+  const grid = document.getElementById("recommend-grid");
+
+  if (recipes.length === 0) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1">
+        <div class="empty-icon">🎲</div>
+        <p>还没有已学会的菜谱，先去学习几道菜吧！</p>
+        <button class="btn-primary" onclick="switchView('list')">📖 查看菜谱</button>
+      </div>`;
+    return;
+  }
+
+  grid.innerHTML = recipes.map(r => `
+    <div class="recommend-card">
+      <div class="card-top">
+        <span class="card-emoji">${r.emoji}</span>
+        <span class="card-difficulty">${r.difficulty}</span>
+      </div>
+      <div class="card-name">${r.name}</div>
+      <div class="card-meta">
+        <span>${r.cookTime ? r.cookTime + "分钟" : "未填用时"}</span>
+        <span>${r.lastCooked ? "上次：" + r.lastCooked : "还没做过"}</span>
+        <span>${r.rating ? r.rating + "/10" : "未评分"}</span>
+      </div>
+      <button class="btn-cook" onclick="startCook('${r.category}','${r.name}')">🍳 就做这个！</button>
+    </div>
+  `).join("");
+}
+
+async function startCook(category, name) {
+  // 跳转到做饭日志并预选菜谱
+  switchView("cook-log");
+  document.getElementById("log-form").style.display = "block";
+  await loadRecipeOptions();
+  document.getElementById("log-recipe").value = `${category}|${name}`;
+}

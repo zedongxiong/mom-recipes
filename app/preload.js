@@ -44,4 +44,14 @@ contextBridge.exposeInMainWorld("api", {
 
   // 打开文件对话框（返回选中的文件路径列表）
   openFileDialog: () => ipcRenderer.invoke("open-file-dialog"),
+
+  // 做饭日志
+  addCookLog: (data) => ipcRenderer.invoke("add-cook-log", data),
+  getCookLogs: (limit) => ipcRenderer.invoke("get-cook-logs", limit),
+
+  // 索引同步
+  syncIndex: () => ipcRenderer.invoke("sync-index"),
+
+  // 今天吃啥推荐
+  getRecommendation: () => ipcRenderer.invoke("get-recommendation"),
 });

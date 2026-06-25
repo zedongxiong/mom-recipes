@@ -23,6 +23,12 @@
       <button class="nav-btn" data-view="create">
         <span class="nav-icon">➕</span> 新建菜谱
       </button>
+      <button class="nav-btn" data-view="cook-log">
+        <span class="nav-icon">📝</span> 做饭日志
+      </button>
+      <button class="nav-btn" data-view="recommend">
+        <span class="nav-icon">🎲</span> 今天吃啥
+      </button>
     </nav>
     <div class="sidebar-footer">
       <div class="stats-mini" id="stats-mini"></div>
@@ -285,6 +291,74 @@
       </div>
     </section>
   </main>
+
+  <!-- 做饭日志页面 -->
+  <section class="view" id="view-cook-log">
+    <div class="log-header">
+      <h2>📝 做饭日志</h2>
+      <button class="btn-primary" id="add-log-btn">➕ 记录今天做菜</button>
+    </div>
+
+    <!-- 快速记录表单 -->
+    <div class="log-form-card" id="log-form" style="display: none;">
+      <h3>记录做菜</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label>菜谱 <span class="required">*</span></label>
+          <select id="log-recipe">
+            <option value="">选择菜谱</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>评分 <span class="required">*</span></label>
+          <div class="rating-input">
+            <input type="number" id="log-rating" min="1" max="10" value="7" />
+            <span class="unit">/10</span>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>问题</label>
+          <input type="text" id="log-issues" placeholder="这次有什么问题？" />
+        </div>
+        <div class="form-group">
+          <label>改进</label>
+          <input type="text" id="log-improvements" placeholder="下次怎么改进？" />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>耗时</label>
+          <div class="number-input">
+            <input type="number" id="log-time" placeholder="分钟" min="1" />
+            <span class="unit">分钟</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>家人反馈</label>
+          <input type="text" id="log-feedback" placeholder="家人怎么说？" />
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn-primary" id="save-log-btn">💾 保存记录</button>
+        <button class="btn-secondary" id="cancel-log-btn">取消</button>
+      </div>
+    </div>
+
+    <!-- 日志列表 -->
+    <div class="log-list" id="log-list"></div>
+  </section>
+
+  <!-- 今天吃啥页面 -->
+  <section class="view" id="view-recommend">
+    <div class="recommend-header">
+      <h2>🎲 今天吃啥</h2>
+      <p class="subtitle">根据很久没做的菜谱推荐</p>
+      <button class="btn-secondary" id="refresh-recommend">🔄 换一批</button>
+    </div>
+    <div class="recommend-grid" id="recommend-grid"></div>
+  </section>
 
   <script src="app.js"></script>
 </body>

@@ -2,12 +2,14 @@ const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
-// 项目根目录（app 的上一级）
+// ========== 路径配置 ==========
 const ROOT = path.resolve(__dirname, "..");
-const RECIPES_DIR = path.join(ROOT, "菜谱");
-const VIDEO_DIR = path.join(ROOT, "视频素材");
+const OBSIDIAN_VAULT = "E:\\obsidian\\生活笔记";
+const RECIPES_DIR = path.join(OBSIDIAN_VAULT, "菜谱");
+const COOK_LOG_FILE = path.join(OBSIDIAN_VAULT, "做饭日志.md");
+const INDEX_FILE = path.join(OBSIDIAN_VAULT, "菜谱索引.md");
 const TEMPLATE_FILE = path.join(ROOT, "菜谱模板.md");
-const README_FILE = path.join(ROOT, "README.md");
+const VIDEO_DIR = path.join(ROOT, "视频素材");
 
 // 分类映射（按烹饪方式）
 const CATEGORIES = {
@@ -24,6 +26,7 @@ const CATEGORIES = {
 
 const DIFFICULTY = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
 
+// ========== 初始化 ==========
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
@@ -42,7 +45,10 @@ function createWindow() {
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  ensureVaultExists();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   app.quit();
@@ -50,16 +56,8 @@ app.on("window-all-closed", () => {
 
 // ========== 工具函数 ==========
 
-// 统一路径分隔符为正斜杠（避免 Windows 反斜杠在 IPC 中出问题）
 function normalizePath(p) {
   return p.replace(/\\/g, "/");
-}
-
-function getDayNumber(dateStr) {
-  const [month, day] = dateStr.split("-").map(Number);
-  if (month === 7) return day;
-  if (month === 8) return 31 + day;
-  return 1;
 }
 
 function ensureDir(dir) {
@@ -68,12 +66,75 @@ function ensureDir(dir) {
   }
 }
 
-// 扫描所有菜谱文件
+// 确保 Obsidian Vault 目录结构存在
+function ensureVaultExists() {
+  ensureDir(OBSIDIAN_VAULT);
+  ensureDir(RECIPES_DIR);
+  for (const cat of Object.keys(CATEGORIES)) {
+    ensureDir(path.join(RECIPES_DIR, cat));
+  }
+  // 确保初始文件存在
+  if (!fs.existsSync(COOK_LOG_FILE)) {
+    fs.writeFileSync(COOK_LOG_FILE, "# 做饭日志\n\n> 每次做菜的记录。格式：日期 → 菜名（第N次）→ 评分 → 问题 → 改进\n\n---\n", "utf-8");
+  }
+  if (!fs.existsSync(INDEX_FILE)) {
+    fs.writeFileSync(INDEX_FILE, "# 菜谱索引\n\n> 自动生成，勿手动编辑。运行应用的\"同步索引\"功能更新。\n\n---\n", "utf-8");
+  }
+}
+
+// ========== Frontmatter 解析 ==========
+
+// 解析 YAML frontmatter（简单 key-value，不引入 yaml 库）
+function parseFrontmatter(content) {
+  const result = {};
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return result;
+
+  const lines = match[1].split("\n");
+  for (const line of lines) {
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+    const key = line.slice(0, colonIndex).trim();
+    let value = line.slice(colonIndex + 1).trim();
+    // 处理空值和引号
+    if (value === '""' || value === "''" || value === "null") value = "";
+    result[key] = value;
+  }
+  return result;
+}
+
+// 更新 frontmatter 中的指定字段
+function updateFrontmatter(content, updates) {
+  const match = content.match(/^(---\r?\n)([\s\S]*?)(\r?\n---)/);
+  if (!match) {
+    // 没有 frontmatter，创建一个
+    let fm = "---\n";
+    for (const [key, value] of Object.entries(updates)) {
+      fm += `${key}: ${value}\n`;
+    }
+    fm += "---\n";
+    return fm + content;
+  }
+
+  let fmContent = match[2];
+  for (const [key, value] of Object.entries(updates)) {
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`^(${escapedKey}:).*$`, "m");
+    if (regex.test(fmContent)) {
+      fmContent = fmContent.replace(regex, `$1 ${value}`);
+    } else {
+      // 字段不存在，添加
+      fmContent += `\n${key}: ${value}`;
+    }
+  }
+
+  return content.replace(match[0], `${match[1]}${fmContent}${match[3]}`);
+}
+
+// ========== 扫描菜谱 ==========
+
 function scanRecipes() {
   const recipes = [];
-  // README 只读一次（修复 N+1）
-  let readmeContent = "";
-  try { readmeContent = fs.readFileSync(README_FILE, "utf-8"); } catch (_) {}
 
   for (const category of Object.keys(CATEGORIES)) {
     const catDir = path.join(RECIPES_DIR, category);
@@ -85,34 +146,20 @@ function scanRecipes() {
       const content = fs.readFileSync(filePath, "utf-8");
       const name = file.replace(".md", "");
 
-      // 解析基本信息
-      const difficultyMatch = content.match(
-        /-\s*\*\*难度\*\*：(⭐+)/
-      );
-      const dateMatch = content.match(
-        /-\s*\*学会日期\*\*：([\d-]+)/
-      );
-      const timeMatch = content.match(
-        /-\s*\*\*用时\*\*：(\d+)\s*分钟/
-      );
-
-      // 从 README 读取状态
-      let status = "📝";
-      const statusRegex = new RegExp(
-        `\\|\\s*\\d*\\s*\\|\\s*${name.replace(
-          /[.*+?^${}()|[\]\\]/g,
-          "\\$&"
-        )}\\s*\\|[^|]*\\|[^|]*\\|\\s*(✅|🔄|📝)\\s*\\|`
-      );
-      const statusMatch = readmeContent.match(statusRegex);
-      if (statusMatch) status = statusMatch[1];
+      // 从 frontmatter 读取元数据
+      const fm = parseFrontmatter(content);
+      const statusMap = { "已学会": "✅", "复习中": "🔄", "已记录": "📝" };
+      const status = statusMap[fm["状态"]] || "📝";
 
       recipes.push({
         name,
         category,
-        difficulty: difficultyMatch ? difficultyMatch[1] : "⭐",
-        date: dateMatch ? dateMatch[1] : "",
-        cookTime: timeMatch ? parseInt(timeMatch[1]) : null,
+        difficulty: fm["难度"] || "⭐",
+        date: fm["学会日期"] || "",
+        cookTime: fm["用时"] ? parseInt(fm["用时"]) : null,
+        servings: fm["份量"] || "2",
+        lastCooked: fm["上次做"] || "",
+        rating: fm["评分"] || "",
         status,
         filePath: normalizePath(path.relative(ROOT, filePath)),
         emoji: CATEGORIES[category],
@@ -139,15 +186,16 @@ ipcMain.handle("create-recipe", (event, data) => {
     if (/[\\/]/.test(name) || /\.\./.test(name)) return { success: false, error: "菜名包含非法字符" };
 
     const dateStr = date || new Date().toISOString().slice(5, 10);
-    const dayNum = getDayNumber(dateStr);
     const fullDate = `2026-${dateStr}`;
+    const difficultyStars = DIFFICULTY[difficulty] || "⭐";
 
     // 1. 创建视频文件夹
+    const dayNum = getDayNumber(dateStr);
     const videoFolderName = `Day${String(dayNum).padStart(2, "0")}-${name}`;
     const videoFolderPath = path.join(VIDEO_DIR, videoFolderName);
     ensureDir(videoFolderPath);
 
-    // 2. 创建菜谱文件
+    // 2. 创建菜谱文件（带 frontmatter）
     const recipeDir = path.join(RECIPES_DIR, category);
     ensureDir(recipeDir);
     const recipeFile = path.join(recipeDir, `${name}.md`);
@@ -156,29 +204,33 @@ ipcMain.handle("create-recipe", (event, data) => {
       return { success: false, error: "菜谱已存在" };
     }
 
+    // 生成 frontmatter
+    let frontmatter = "---\n";
+    frontmatter += `状态: 已记录\n`;
+    frontmatter += `难度: ${difficultyStars}\n`;
+    frontmatter += `分类: ${category}\n`;
+    frontmatter += `学会日期: ${fullDate}\n`;
+    frontmatter += `用时: ${cookTime || ""}\n`;
+    frontmatter += `份量: ${servings || 2}\n`;
+    frontmatter += `上次做: ""\n`;
+    frontmatter += `评分: ""\n`;
+    frontmatter += "---\n\n";
+
+    // 读取模板并替换
     let template = fs.readFileSync(TEMPLATE_FILE, "utf-8");
-    const difficultyStars = DIFFICULTY[difficulty] || "⭐";
     const timeStr = cookTime ? `${cookTime} 分钟` : "___ 分钟";
 
     template = template
       .replace("[菜名]", name)
-      .replace(
-        "肉类 / 海鲜 / 蔬菜 / 汤品 / 主食 / 凉菜 / 节日菜",
-        category
-      )
+      .replace("肉类 / 海鲜 / 蔬菜 / 汤品 / 主食 / 凉菜 / 节日菜", category)
       .replace("⭐ / ⭐⭐ / ⭐⭐⭐", difficultyStars)
       .replace("___ 分钟", timeStr)
       .replace("___ 人份", `${servings || 2} 人份`)
       .replace("____-__-__", fullDate)
-      .replace(
-        "视频素材/DayXX-菜名/",
-        `视频素材/${videoFolderName}/`
-      );
+      .replace("视频素材/DayXX-菜名/", `视频素材/${videoFolderName}/`);
 
-    fs.writeFileSync(recipeFile, template, "utf-8");
-
-    // 3. 更新 README
-    updateReadme(name, category, difficulty, dateStr);
+    // 写入文件（frontmatter + 模板内容）
+    fs.writeFileSync(recipeFile, frontmatter + template, "utf-8");
 
     return {
       success: true,
@@ -190,97 +242,6 @@ ipcMain.handle("create-recipe", (event, data) => {
     return { success: false, error: error.message };
   }
 });
-
-// 更新 README
-function updateReadme(name, category, difficulty, dateStr) {
-  let content = fs.readFileSync(README_FILE, "utf-8");
-  const difficultyStars = DIFFICULTY[difficulty] || "⭐";
-  const emoji = CATEGORIES[category];
-  const header = `### ${emoji} ${category}`;
-
-  const lines = content.split("\n");
-  const newLines = [];
-  let inTarget = false;
-  let foundTable = false;
-  let rowCount = 0;
-  let inserted = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (line.trim() === header) {
-      inTarget = true;
-      foundTable = false;
-      rowCount = 0;
-      newLines.push(line);
-      continue;
-    }
-
-    if (inTarget && line.includes("| # |")) {
-      foundTable = true;
-      newLines.push(line);
-      continue;
-    }
-
-    if (inTarget && foundTable && line.includes("|---")) {
-      newLines.push(line);
-      continue;
-    }
-
-    if (
-      inTarget &&
-      foundTable &&
-      line.startsWith("|") &&
-      !inserted
-    ) {
-      const cells = line
-        .split("|")
-        .slice(1, -1)
-        .map((c) => c.trim());
-      if (cells.some((c) => c)) {
-        rowCount++;
-        newLines.push(line);
-      } else {
-        // 空行，插入
-        newLines.push(
-          `| ${rowCount + 1} | ${name} | ${difficultyStars} | ${dateStr} | ✅ |`
-        );
-        inserted = true;
-        newLines.push(line);
-      }
-      continue;
-    }
-
-    if (
-      inTarget &&
-      line.startsWith("### ") &&
-      line.trim() !== header &&
-      !inserted
-    ) {
-      newLines.push(
-        `| ${rowCount + 1} | ${name} | ${difficultyStars} | ${dateStr} | ✅ |`
-      );
-      inserted = true;
-      inTarget = false;
-    }
-
-    newLines.push(line);
-  }
-
-  let result = newLines.join("\n");
-
-  // 更新统计
-  const match = result.match(/- \*\*已学会\*\*：(\d+) 道/);
-  if (match) {
-    const oldCount = parseInt(match[1]);
-    result = result.replace(
-      `- **已学会**：${oldCount} 道`,
-      `- **已学会**：${oldCount + 1} 道`
-    );
-  }
-
-  fs.writeFileSync(README_FILE, result, "utf-8");
-}
 
 // 获取菜谱列表
 ipcMain.handle("list-recipes", () => {
@@ -299,66 +260,43 @@ ipcMain.handle("read-recipe", (event, filePath) => {
 // 保存菜谱
 ipcMain.handle("save-recipe", (event, filePath, content) => {
   const fullPath = path.join(ROOT, filePath);
-  fs.writeFileSync(fullPath, content, "utf-8");
+  // 原子写入（先写临时文件再 rename）
+  const tmpPath = fullPath + ".tmp";
+  fs.writeFileSync(tmpPath, content, "utf-8");
+  fs.renameSync(tmpPath, fullPath);
   return { success: true };
 });
 
-// 更新状态
+// 更新状态（现在更新 frontmatter）
 ipcMain.handle("update-status", (event, category, name, status) => {
-  let content = fs.readFileSync(README_FILE, "utf-8");
-  const statusMap = { learned: "✅", review: "🔄", recorded: "📝" };
+  const recipeFile = path.join(RECIPES_DIR, category, `${name}.md`);
+  if (!fs.existsSync(recipeFile)) {
+    return { success: false, error: "菜谱不存在" };
+  }
+
+  const statusMap = { learned: "已学会", review: "复习中", recorded: "已记录" };
   const newStatus = statusMap[status] || status;
 
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(
-    `(\\|\\s*\\d*\\s*\\|\\s*${escapedName}\\s*\\|[^|]*\\|[^|]*\\|)\\s*(✅|🔄|📝)\\s*(\\|)`
-  );
-  content = content.replace(regex, `$1 ${newStatus} $3`);
+  let content = fs.readFileSync(recipeFile, "utf-8");
+  content = updateFrontmatter(content, { 状态: newStatus });
+  fs.writeFileSync(recipeFile, content, "utf-8");
 
-  fs.writeFileSync(README_FILE, content, "utf-8");
   return { success: true };
 });
 
 // 删除菜谱
 ipcMain.handle("delete-recipe", (event, category, name) => {
   try {
-    // 1. 参数校验
     if (!category || !name) return { success: false, error: "参数不完整" };
     if (!CATEGORIES[category]) return { success: false, error: `无效分类: ${category}` };
     if (/[\\/]/.test(name) || /\.\./.test(name)) return { success: false, error: "菜名包含非法字符" };
 
-    // 2. 检查文件是否存在
     const recipeFile = path.join(RECIPES_DIR, category, `${name}.md`);
     if (!fs.existsSync(recipeFile)) {
       return { success: false, error: `菜谱不存在: ${name}` };
     }
 
-    // 3. 删除文件
     fs.unlinkSync(recipeFile);
-
-    // 4. 从 README 移除（先检查是否真的有这行）
-    let content = fs.readFileSync(README_FILE, "utf-8");
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(
-      `\\|\\s*\\d+\\s*\\|\\s*${escapedName}\\s*\\|[^|]*\\|[^|]*\\|[^|]*\\|\\s*\n?`
-    );
-
-    if (regex.test(content)) {
-      content = content.replace(regex, "");
-
-      // 更新统计（只在 README 中有记录时才减）
-      const match = content.match(/- \*\*已学会\*\*：(\d+) 道/);
-      if (match) {
-        const oldCount = parseInt(match[1]);
-        content = content.replace(
-          `- **已学会**：${oldCount} 道`,
-          `- **已学会**：${Math.max(0, oldCount - 1)} 道`
-        );
-      }
-
-      fs.writeFileSync(README_FILE, content, "utf-8");
-    }
-
     return { success: true };
   } catch (error) {
     console.error("[delete-recipe]", error);
@@ -382,7 +320,180 @@ ipcMain.handle("get-stats", () => {
   return { total, learned, review, recorded, byCategory };
 });
 
-// 打开视频文件夹
+// ========== 做饭日志 ==========
+
+// 记录做饭日志
+ipcMain.handle("add-cook-log", (event, data) => {
+  try {
+    const { recipeName, category, rating, issues, improvements, time, feedback, cookCount } = data;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 格式化日志条目
+    let logEntry = `\n## ${today}\n\n`;
+    logEntry += `### 🍳 ${recipeName}（第 ${cookCount || 1} 次）\n`;
+    logEntry += `- **评分**：${rating || "-"}/10\n`;
+    if (issues) logEntry += `- **问题**：${issues}\n`;
+    if (improvements) logEntry += `- **改进**：${improvements}\n`;
+    if (time) logEntry += `- **耗时**：${time} 分钟\n`;
+    if (feedback) logEntry += `- **家人反馈**：${feedback}\n`;
+    logEntry += "\n---\n";
+
+    // 追加到做饭日志
+    let logContent = fs.readFileSync(COOK_LOG_FILE, "utf-8");
+    logContent += logEntry;
+    fs.writeFileSync(COOK_LOG_FILE, logContent, "utf-8");
+
+    // 更新菜谱 frontmatter（上次做、评分）
+    if (category) {
+      const recipeFile = path.join(RECIPES_DIR, category, `${recipeName}.md`);
+      if (fs.existsSync(recipeFile)) {
+        let content = fs.readFileSync(recipeFile, "utf-8");
+        const updates = { 上次做: today };
+        if (rating) updates["评分"] = rating;
+        content = updateFrontmatter(content, updates);
+        fs.writeFileSync(recipeFile, content, "utf-8");
+      }
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error("[add-cook-log]", error);
+    return { success: false, error: error.message };
+  }
+});
+
+// 读取做饭日志
+ipcMain.handle("get-cook-logs", (event, limit) => {
+  try {
+    const content = fs.readFileSync(COOK_LOG_FILE, "utf-8");
+    // 解析日志条目
+    const entries = [];
+    const sections = content.split(/^## /m).slice(1); // 跳过标题
+
+    for (const section of sections) {
+      const lines = section.trim().split("\n");
+      const date = lines[0].trim();
+
+      // 解析子条目
+      const subSections = section.split(/^### /m).slice(1);
+      for (const sub of subSections) {
+        const subLines = sub.trim().split("\n");
+        const titleMatch = subLines[0].match(/🍳\s*(.+)（第\s*(\d+)\s*次）/);
+        if (!titleMatch) continue;
+
+        const entry = {
+          date,
+          recipeName: titleMatch[1],
+          cookCount: parseInt(titleMatch[2]),
+          rating: "",
+          issues: "",
+          improvements: "",
+          time: "",
+          feedback: "",
+        };
+
+        for (const line of subLines.slice(1)) {
+          if (line.includes("**评分**")) entry.rating = line.split("：")[1]?.trim() || "";
+          if (line.includes("**问题**")) entry.issues = line.split("：")[1]?.trim() || "";
+          if (line.includes("**改进**")) entry.improvements = line.split("：")[1]?.trim() || "";
+          if (line.includes("**耗时**")) entry.time = line.split("：")[1]?.trim() || "";
+          if (line.includes("**家人反馈**")) entry.feedback = line.split("：")[1]?.trim() || "";
+        }
+
+        entries.push(entry);
+      }
+    }
+
+    // 按日期倒序，限制数量
+    entries.sort((a, b) => (b.date > a.date ? 1 : -1));
+    return entries.slice(0, limit || 20);
+  } catch (error) {
+    console.error("[get-cook-logs]", error);
+    return [];
+  }
+});
+
+// ========== 索引同步 ==========
+
+ipcMain.handle("sync-index", () => {
+  try {
+    const recipes = scanRecipes();
+
+    // 按分类组织
+    const byCategory = {};
+    for (const r of recipes) {
+      if (!byCategory[r.category]) byCategory[r.category] = [];
+      byCategory[r.category].push(r);
+    }
+
+    // 生成索引内容
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+    let indexContent = `# 菜谱索引\n\n> 自动生成于 ${timestamp}。勿手动编辑。\n\n`;
+
+    // 保留 Dataview 查询块
+    indexContent += `## Dataview 查询\n\n\`\`\`dataview\nTABLE 难度, 用时, 上次做 AS "上次做", 评分, 状态\nFROM "菜谱"\nWHERE 状态 = "已学会"\nSORT 上次做 ASC\n\`\`\`\n\n`;
+
+    // 按分类生成表格
+    for (const [cat, emoji] of Object.entries(CATEGORIES)) {
+      const catRecipes = byCategory[cat] || [];
+      if (catRecipes.length === 0) continue;
+
+      indexContent += `## ${emoji} ${cat}\n\n`;
+      indexContent += `| # | 菜名 | 难度 | 用时 | 上次做 | 评分 | 状态 |\n`;
+      indexContent += `|---|------|------|------|--------|------|------|\n`;
+
+      catRecipes.forEach((r, i) => {
+        const time = r.cookTime ? `${r.cookTime}分钟` : "-";
+        const lastCooked = r.lastCooked || "-";
+        const rating = r.rating ? `${r.rating}/10` : "-";
+        indexContent += `| ${i + 1} | ${r.name} | ${r.difficulty} | ${time} | ${lastCooked} | ${rating} | ${r.status} |\n`;
+      });
+
+      indexContent += "\n";
+    }
+
+    // 原子写入
+    const tmpPath = INDEX_FILE + ".tmp";
+    fs.writeFileSync(tmpPath, indexContent, "utf-8");
+    fs.renameSync(tmpPath, INDEX_FILE);
+
+    return { success: true, count: recipes.length };
+  } catch (error) {
+    console.error("[sync-index]", error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ========== 今天吃啥 ==========
+
+ipcMain.handle("get-recommendation", () => {
+  try {
+    const recipes = scanRecipes();
+
+    // 只推荐已学会的菜谱
+    const learned = recipes.filter((r) => r.status === "✅");
+
+    // 按"上次做"日期升序排列（很久没做的排前面）
+    learned.sort((a, b) => {
+      // 没有上次做记录的排最前面
+      if (!a.lastCooked && !b.lastCooked) return 0;
+      if (!a.lastCooked) return -1;
+      if (!b.lastCooked) return 1;
+      return a.lastCooked < b.lastCooked ? -1 : 1;
+    });
+
+    // 返回前 10 条
+    return learned.slice(0, 10);
+  } catch (error) {
+    console.error("[get-recommendation]", error);
+    return [];
+  }
+});
+
+// ========== 视频相关（保留原有功能）==========
+
 ipcMain.handle("open-video-folder", (event, folderName) => {
   const folderPath = path.join(VIDEO_DIR, folderName);
   if (fs.existsSync(folderPath)) {
@@ -390,7 +501,6 @@ ipcMain.handle("open-video-folder", (event, folderName) => {
   }
 });
 
-// 打开菜谱文件
 ipcMain.handle("open-recipe-file", (event, filePath) => {
   const fullPath = path.join(ROOT, filePath);
   if (fs.existsSync(fullPath)) {
@@ -398,7 +508,6 @@ ipcMain.handle("open-recipe-file", (event, filePath) => {
   }
 });
 
-// 获取视频文件夹路径（根据菜谱名查找）
 ipcMain.handle("get-video-folder", (event, recipeName) => {
   if (!fs.existsSync(VIDEO_DIR)) return null;
   const dirs = fs.readdirSync(VIDEO_DIR);
@@ -406,7 +515,6 @@ ipcMain.handle("get-video-folder", (event, recipeName) => {
   return match || null;
 });
 
-// 列出视频文件夹中的文件
 ipcMain.handle("list-videos", (event, folderName) => {
   const folderPath = path.join(VIDEO_DIR, folderName);
   if (!fs.existsSync(folderPath)) return [];
@@ -419,7 +527,6 @@ ipcMain.handle("list-videos", (event, folderName) => {
     });
 });
 
-// 导入视频文件到菜谱文件夹（移动，不是复制）
 ipcMain.handle("import-videos", (event, recipeName, fileNames) => {
   if (!fs.existsSync(VIDEO_DIR)) return { success: false, error: "视频素材目录不存在" };
   const dirs = fs.readdirSync(VIDEO_DIR);
@@ -433,13 +540,11 @@ ipcMain.handle("import-videos", (event, recipeName, fileNames) => {
     if (!fs.existsSync(filePath)) continue;
     const ext = path.extname(filePath);
 
-    // 规范化命名：DayXX-菜名-N.mp4
     const existingFiles = fs.readdirSync(destDir).filter((f) => /\.(mp4|mov|avi|mkv|webm)$/i.test(f));
     const num = existingFiles.length + 1;
     const newName = `${folder}-${num}${ext}`;
     const destPath = path.join(destDir, newName);
 
-    // 移动文件（跨盘符时 fallback 到复制+删除）
     try {
       fs.renameSync(filePath, destPath);
     } catch (e) {
@@ -452,7 +557,6 @@ ipcMain.handle("import-videos", (event, recipeName, fileNames) => {
   return { success: true, imported, folder };
 });
 
-// 打开文件选择对话框，返回文件信息（路径、名字、大小）
 ipcMain.handle("open-file-dialog", async () => {
   const result = await dialog.showOpenDialog({
     properties: ["openFile", "multiSelections"],
@@ -467,7 +571,6 @@ ipcMain.handle("open-file-dialog", async () => {
   });
 });
 
-// 打开视频文件夹
 ipcMain.handle("open-video-folder-for-recipe", (event, recipeName) => {
   if (!fs.existsSync(VIDEO_DIR)) return;
   const dirs = fs.readdirSync(VIDEO_DIR);
@@ -476,3 +579,12 @@ ipcMain.handle("open-video-folder-for-recipe", (event, recipeName) => {
     shell.openPath(path.join(VIDEO_DIR, folder));
   }
 });
+
+// ========== 辅助函数 ==========
+
+function getDayNumber(dateStr) {
+  const [month, day] = dateStr.split("-").map(Number);
+  if (month === 7) return day;
+  if (month === 8) return 31 + day;
+  return 1;
+}
