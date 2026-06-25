@@ -845,10 +845,6 @@ nav {
 
 /* ===== 做饭日志 ===== */
 
-#view-cook-log {
-  padding: 32px 40px;
-}
-
 .log-header {
   display: flex;
   justify-content: space-between;
@@ -939,10 +935,6 @@ nav {
 }
 
 /* ===== 今天吃啥 ===== */
-
-#view-recommend {
-  padding: 32px 40px;
-}
 
 .recommend-header {
   margin-bottom: 32px;

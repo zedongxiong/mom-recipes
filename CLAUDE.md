@@ -114,6 +114,24 @@ Electron 应用 (CRUD)  ──读写──▶  Obsidian Vault (数据)
 - 视频文件夹：`DayXX-菜名/`（如 `Day05-红烧肉/`）
 - 剪辑成品：`菜名.mp4`
 
+## 更新日志
+
+### 2026-06-26：修复重构后的两个 Bug
+
+**Bug 1：做饭日志和今天吃啥页面在 `<main>` 外面**
+- 症状：这两个页面没有 padding 和滚动
+- 原因：`#view-cook-log` 和 `#view-recommend` 的 `<section>` 写在了 `</main>` 之后
+- 修复：移入 `<main class="content">` 内部，删除 CSS 中多余的独立 padding
+
+**Bug 2：编辑保存后 frontmatter 丢失**
+- 症状：编辑并保存已有菜谱后，frontmatter（状态、评分等）全部丢失
+- 原因：`parseMarkdown` 跳过了 frontmatter 但没保存，`toMarkdown` 也没写回
+- 修复：
+  - 新增 `currentFrontmatter` 全局变量存储原始 frontmatter
+  - `parseMarkdown` 提取 frontmatter 后用 `bodyMd` 解析正文
+  - `toMarkdown` 拼接回原始 frontmatter
+  - `saveRecipe` 同步更新 frontmatter 中的难度/分类/用时/份量
+
 ## Obsidian 端配置
 
 ### 必装插件

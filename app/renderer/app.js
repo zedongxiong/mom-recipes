@@ -2,6 +2,7 @@
 let allRecipes = [];
 let currentEditFile = null;
 let currentRecipeName = null;
+let currentFrontmatter = ""; // 保存原始 frontmatter，写回时用
 let pendingVideos = []; // 待导入的视频 {path, name, size}
 
 // 模板占位文本，解析时要忽略
@@ -356,29 +357,36 @@ function parseMarkdown(md) {
     mistakes: [], substitute: "", essential: "", variety: "", notes: "", feedback: "",
   };
 
-  const titleMatch = md.match(/^#\s+(.+)/m);
+  // 提取并保存原始 frontmatter
+  const fmMatch = md.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  currentFrontmatter = fmMatch ? fmMatch[0] : "";
+
+  // 跳过 frontmatter 解析正文
+  const bodyMd = fmMatch ? md.slice(fmMatch[0].length) : md;
+
+  const titleMatch = bodyMd.match(/^#\s+(.+)/m);
   if (titleMatch) data.name = titleMatch[1].trim();
 
-  const catMatch = md.match(/-\s*\*\*分类\*\*：(.+)/);
+  const catMatch = bodyMd.match(/-\s*\*\*分类\*\*：(.+)/);
   if (catMatch) {
     data.category = catMatch[1].trim();
     const catMap = { 炒: "🍳", 炖煮: "🍲", 蒸: "♨️", 煎炸: "🫕", 凉拌: "🥗", 汤: "🥣", 烤: "🔥", 腌卤: "🧂", 主食: "🍚" };
     data.emoji = catMap[data.category] || "";
   }
 
-  const diffMatch = md.match(/-\s*\*\*难度\*\*：(⭐+)/);
+  const diffMatch = bodyMd.match(/-\s*\*\*难度\*\*：(⭐+)/);
   if (diffMatch) data.difficulty = diffMatch[1].length <= 1 ? 1 : diffMatch[1].length === 2 ? 2 : 3;
 
-  const timeMatch = md.match(/-\s*\*\*用时\*\*：(\d+)/);
+  const timeMatch = bodyMd.match(/-\s*\*\*用时\*\*：(\d+)/);
   if (timeMatch) data.time = timeMatch[1];
 
-  const servMatch = md.match(/-\s*\*\*份量\*\*：(\d+)/);
+  const servMatch = bodyMd.match(/-\s*\*\*份量\*\*：(\d+)/);
   if (servMatch) data.servings = servMatch[1];
 
   let section = "";
   let stepData = null;
 
-  const lines = md.split("\n");
+  const lines = bodyMd.split("\n");
   for (const line of lines) {
     const t = line.trim();
 
@@ -667,6 +675,15 @@ function toMarkdown(data) {
   const diffStars = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
   let md = "";
 
+  // 保留原始 frontmatter
+  if (currentFrontmatter) {
+    md += currentFrontmatter;
+    if (!currentFrontmatter.endsWith("\n\n")) {
+      if (currentFrontmatter.endsWith("\n")) md += "\n";
+      else md += "\n\n";
+    }
+  }
+
   md += `# ${data.name}\n\n`;
   md += `## 基本信息\n\n`;
   md += `- **分类**：${data.category}\n`;
@@ -733,6 +750,17 @@ function toMarkdown(data) {
 async function saveRecipe() {
   if (!currentEditFile) return;
   const data = collectFormData();
+
+  // 同步更新 frontmatter 中的字段
+  const diffStars = { 1: "⭐", 2: "⭐⭐", 3: "⭐⭐⭐" };
+  if (currentFrontmatter) {
+    currentFrontmatter = currentFrontmatter
+      .replace(/(难度:).*/, `$1 ${diffStars[data.difficulty]}`)
+      .replace(/(分类:).*/, `$1 ${data.category}`)
+      .replace(/(用时:).*/, `$1 ${data.time || ""}`)
+      .replace(/(份量:).*/, `$1 ${data.servings || 2}`);
+  }
+
   const md = toMarkdown(data);
   const result = await window.api.saveRecipe(currentEditFile, md);
 
